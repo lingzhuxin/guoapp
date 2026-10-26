@@ -1,0 +1,80 @@
+name: Build full-source Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      GOSUMDB: sum.golang.org
+    steps:
+      - name: Fetch original v0.2.72-79 source
+        uses: actions/checkout@v4
+        with:
+          repository: limbia/guoapp
+          ref: 96d3a6407ade99be5b8fd2ce18206c66bda2d69a
+          persist-credentials: false
+      - name: Restore visible source password settings
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('lib/settings_screen.dart')
+          text = path.read_text(encoding='utf-8')
+          anchor = "import 'sources_screen.dart';"
+          assert text.count(anchor) == 1
+          text = text.replace(anchor, anchor + "\nimport 'source_gate_dialog.dart';")
+          anchor = '                    if (widget.repository.supportsSourceManagement)'
+          assert text.count(anchor) == 1
+          tile = '''                    if (allSourcesEnabled)
+                                ListTile(
+                                  leading: const Icon(Icons.lock_outline),
+                                  title: const Text('站源密码锁'),
+                                  subtitle: const Text('解锁隐藏站源或管理密码锁'),
+                                  trailing: const Icon(Icons.chevron_right_rounded),
+                                  onTap: () => showSourceGateDialog(context, widget.store),
+                                ),
+          '''
+          text = text.replace(anchor, tile + anchor)
+          path.write_text(text, encoding='utf-8')
+          path = Path('pubspec.yaml')
+          text = path.read_text(encoding='utf-8')
+          assert 'version: 0.2.72+79' in text
+          path.write_text(text.replace('version: 0.2.72+79', 'version: 0.2.73+80'), encoding='utf-8')
+          Path('android/key.properties').unlink(missing_ok=True)
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36'
+      - name: Install Android NDK
+        run: sdkmanager 'ndk;28.2.13676358'
+      - name: Format changed Dart file
+        run: dart format lib/settings_screen.dart
+      - name: Build all sources arm64 APK
+        run: python3 scripts/build_android.py --all-sources --abi arm64-v8a
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zhenguojian-0.2.73-80-all-sources-arm64
+          path: dist/android/*
+          if-no-files-found: error
+          retention-days: 14
